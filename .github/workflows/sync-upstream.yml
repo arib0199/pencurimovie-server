@@ -72,3 +72,4 @@ jobs:
           echo "Triggering Render deploy hook..."
           curl -fsS -X POST "$RENDER_DEPLOY_HOOK"
           echo "Render deployment triggered successfully!"
+
