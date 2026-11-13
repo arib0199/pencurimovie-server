@@ -80,7 +80,6 @@ ENV PM_APP_ROOT=/data \
     PORT=8088
 
 EXPOSE 8088
-VOLUME ["/data"]
 USER 10001
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
