@@ -2,8 +2,10 @@ name: Sync with Upstream & Auto Commit
 
 on:
   schedule:
-    # Check for new commits from aiskendi every 30 minutes
-    - cron: '*/30 * * * *'
+    # Poll aiskendi every 5 minutes (GitHub's minimum cron interval)
+    # This is as close to "real-time" as GitHub Actions allows for watching
+    # another repo — triggers a sync within 5 min of any new aiskendi commit.
+    - cron: '*/5 * * * *'
   workflow_dispatch:
     inputs:
       force_deploy:
@@ -20,58 +22,68 @@ jobs:
       workflows: write
 
     steps:
+      # Step 1: Fast pre-check using GitHub API — no git checkout needed.
+      # If upstream SHA matches our fork's SHA, skip everything else.
+      - name: Quick check via GitHub API
+        id: api_check
+        run: |
+          UPSTREAM_SHA=$(curl -sf \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/aiskendi/pencarimovie-server/commits/main" \
+            | jq -r '.sha')
+
+          FORK_SHA=$(curl -sf \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/arib0199/pencurimovie-server/commits/main" \
+            | jq -r '.sha')
+
+          echo "upstream_sha=$UPSTREAM_SHA" >> $GITHUB_OUTPUT
+          echo "fork_sha=$FORK_SHA" >> $GITHUB_OUTPUT
+
+          if [ "$UPSTREAM_SHA" = "$FORK_SHA" ]; then
+            echo "already_synced=true" >> $GITHUB_OUTPUT
+            echo "Already in sync (SHA: $FORK_SHA). No action needed."
+          else
+            echo "already_synced=false" >> $GITHUB_OUTPUT
+            echo "New commit detected on aiskendi! upstream=$UPSTREAM_SHA fork=$FORK_SHA"
+          fi
+
       - name: Checkout fork
+        if: steps.api_check.outputs.already_synced == 'false'
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Configure Git Bot
+        if: steps.api_check.outputs.already_synced == 'false'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Add upstream remote
+      - name: Add upstream remote & fetch
+        if: steps.api_check.outputs.already_synced == 'false'
         run: |
           git remote add upstream https://github.com/aiskendi/pencarimovie-server.git
-
-      - name: Fetch upstream commits and tags
-        run: |
           git fetch upstream main --tags --force
 
-      - name: Check if aiskendi has new commits
-        id: check
-        run: |
-          UPSTREAM=$(git rev-parse upstream/main)
-          echo "upstream=$UPSTREAM" >> $GITHUB_OUTPUT
-
-          if git merge-base --is-ancestor upstream/main HEAD; then
-            echo "in_sync=true" >> $GITHUB_OUTPUT
-            echo "Already up-to-date with aiskendi. No new commits."
-          else
-            echo "in_sync=false" >> $GITHUB_OUTPUT
-            echo "New commits detected from aiskendi! Syncing..."
-          fi
-
       - name: Merge upstream changes into fork
-        if: steps.check.outputs.in_sync == 'false'
+        if: steps.api_check.outputs.already_synced == 'false'
         run: |
           git checkout main
-
-          # Merge upstream using ours strategy for any conflicts in fork-only files
           git merge upstream/main \
             --no-edit \
-            --strategy-option=theirs \
-            -m "chore: sync with upstream aiskendi/pencarimovie-server"
-
+            --strategy-option=theirs
           echo "Merge complete. Pushing to origin..."
           git push origin main
           git push origin --tags --force
-          echo "Successfully committed and pushed new changes from aiskendi!"
+          echo "✅ Successfully synced and committed new changes from aiskendi!"
 
       - name: Trigger Render Deploy Hook (if configured)
         if: >
-          steps.check.outputs.in_sync == 'false' ||
+          steps.api_check.outputs.already_synced == 'false' ||
           github.event.inputs.force_deploy == 'true'
         env:
           RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
@@ -81,6 +93,6 @@ jobs:
             curl -fsS -X POST "$RENDER_DEPLOY_HOOK"
             echo "Render deployment triggered successfully!"
           else
-            echo "No RENDER_DEPLOY_HOOK_URL secret set, skipping deploy."
+            echo "No RENDER_DEPLOY_HOOK_URL secret set — skipping deploy."
           fi
 
