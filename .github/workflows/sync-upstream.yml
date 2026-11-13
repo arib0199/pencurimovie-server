@@ -34,42 +34,53 @@ jobs:
       - name: Add upstream remote
         run: |
           git remote add upstream https://github.com/aiskendi/pencarimovie-server.git
-          git remote -v
 
       - name: Fetch upstream commits and tags
-        run: git fetch upstream main --tags
+        run: |
+          git fetch upstream main --tags --force
 
       - name: Check if aiskendi has new commits
         id: check
         run: |
-          LOCAL=$(git rev-parse HEAD)
           UPSTREAM=$(git rev-parse upstream/main)
-          echo "local=$LOCAL" >> $GITHUB_OUTPUT
           echo "upstream=$UPSTREAM" >> $GITHUB_OUTPUT
 
           if git merge-base --is-ancestor upstream/main HEAD; then
             echo "in_sync=true" >> $GITHUB_OUTPUT
-            echo "Already up-to-date with aiskendi/pencarimovie-server. No new commits to pull."
+            echo "Already up-to-date with aiskendi. No new commits."
           else
             echo "in_sync=false" >> $GITHUB_OUTPUT
-            echo "aiskendi has new commits! Syncing and committing..."
+            echo "New commits detected from aiskendi! Syncing..."
           fi
 
-      - name: Merge and commit upstream changes
+      - name: Merge upstream changes into fork
         if: steps.check.outputs.in_sync == 'false'
         run: |
           git checkout main
-          git merge upstream/main --no-edit -m "chore: sync with upstream aiskendi/pencarimovie-server"
+
+          # Merge upstream using ours strategy for any conflicts in fork-only files
+          git merge upstream/main \
+            --no-edit \
+            --strategy-option=theirs \
+            -m "chore: sync with upstream aiskendi/pencarimovie-server"
+
+          echo "Merge complete. Pushing to origin..."
           git push origin main
-          git push origin --tags
-          echo "Successfully synced and committed new changes from aiskendi!"
+          git push origin --tags --force
+          echo "Successfully committed and pushed new changes from aiskendi!"
 
       - name: Trigger Render Deploy Hook (if configured)
-        if: (steps.check.outputs.in_sync == 'false' || inputs.force_deploy == true) && env.RENDER_DEPLOY_HOOK != ''
+        if: >
+          steps.check.outputs.in_sync == 'false' ||
+          github.event.inputs.force_deploy == 'true'
         env:
           RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
         run: |
-          echo "Triggering Render deploy hook..."
-          curl -fsS -X POST "$RENDER_DEPLOY_HOOK"
-          echo "Render deployment triggered successfully!"
+          if [ -n "$RENDER_DEPLOY_HOOK" ]; then
+            echo "Triggering Render deploy hook..."
+            curl -fsS -X POST "$RENDER_DEPLOY_HOOK"
+            echo "Render deployment triggered successfully!"
+          else
+            echo "No RENDER_DEPLOY_HOOK_URL secret set, skipping deploy."
+          fi
 
