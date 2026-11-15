@@ -20,23 +20,27 @@ jobs:
       workflows: write
 
     steps:
-      # Use GitHub's compare API to check if upstream is AHEAD of our fork.
-      # Simple SHA comparison is wrong when the fork has extra commits of its own.
-      # "behind_by > 0" means aiskendi has commits our fork doesn't have yet.
+      # Use GitHub's compare API — "behind_by > 0" means aiskendi has new commits
+      # our fork is missing. Using branch name "main" (not "HEAD") in the URL.
       - name: Check if upstream is ahead via GitHub API
         id: api_check
         run: |
           COMPARE=$(curl -sf \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/arib0199/pencurimovie-server/compare/HEAD...aiskendi:pencarimovie-server:main")
+            "https://api.github.com/repos/arib0199/pencurimovie-server/compare/main...aiskendi:pencarimovie-server:main")
+
+          if [ -z "$COMPARE" ]; then
+            echo "ERROR: GitHub API returned empty response. Aborting." >&2
+            exit 1
+          fi
 
           BEHIND=$(echo "$COMPARE" | jq -r '.behind_by // 0')
           STATUS=$(echo "$COMPARE" | jq -r '.status // "unknown"')
 
           echo "behind_by=$BEHIND" >> $GITHUB_OUTPUT
-          echo "status=$STATUS"
-          echo "behind_by=$BEHIND"
+          echo "compare_status=$STATUS" >> $GITHUB_OUTPUT
+          echo "API compare status: $STATUS, behind_by: $BEHIND"
 
           if [ "$BEHIND" -gt 0 ]; then
             echo "needs_sync=true" >> $GITHUB_OUTPUT
@@ -67,6 +71,8 @@ jobs:
 
       - name: Merge upstream changes into fork
         if: steps.api_check.outputs.needs_sync == 'true'
+        env:
+          BEHIND: ${{ steps.api_check.outputs.behind_by }}
         run: |
           git checkout main
           git merge upstream/main \
@@ -75,7 +81,7 @@ jobs:
           echo "Merge complete. Pushing to origin..."
           git push origin main
           git push origin --tags --force
-          echo "✅ Synced ${{ steps.api_check.outputs.behind_by }} new commit(s) from aiskendi!"
+          echo "✅ Synced $BEHIND new commit(s) from aiskendi!"
 
       - name: Trigger Render Deploy Hook (if configured)
         if: >
