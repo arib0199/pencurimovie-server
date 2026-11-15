@@ -26,13 +26,53 @@ services:
       url: ghcr.io/aiskendi/pencarimovie-server:native
     plan: free
     region: singapore
+
+    # --- Persistent Disk ---------------------------------------------------
+    # Mounts a persistent volume at /data so that sessions, bot pool, auth
+    # keys, and cache all SURVIVE redeployments and restarts.
+    # PM_APP_ROOT tells the server to use /data as its working root, so all
+    # state lands in /data/storage/ instead of the ephemeral container disk.
+    #
+    # NOTE: Render's free plan does NOT support persistent disks.
+    #       Upgrade to Starter ($7/mo) or higher to enable this block.
+    #       If you stay on free, use BOT_TOKENS + PM_CATALOG_SETTINGS below
+    #       to restore state via environment variables on every redeploy.
+    # -----------------------------------------------------------------------
+    # disk:
+    #   name: pencarimovie-data
+    #   mountPath: /data
+    #   sizeGB: 1
+
     envVars:
+      # Where sessions, bot pool, auth keys, and cache are stored.
+      # Points to the persistent disk mount above (/data).
+      # Remove or comment this out if the disk block above is commented out.
+      # - key: PM_APP_ROOT
+      #   value: /data
+
       - key: SERVER_TOKEN
         sync: false
       - key: SERVER_PASSWORD
         sync: false
-      # Ephemeral disk: storage/catalog_settings.json is gone after every
-      # restart/redeploy, so the dashboard's catalog/upstream/stream config is
-      # supplied here instead (a JSON object; any subset of the file's keys).
+
+      # --- Bot Pool (survives redeploy) ------------------------------------
+      # Set this to your bot token(s) so the server auto-logs in the bot on
+      # every restart WITHOUT needing the on-disk session files.
+      # Format: comma or space separated list of tokens.
+      # Example: 8020418602:AABBcc...
+      # This is the ONLY state that survives on the free plan without a disk.
+      - key: BOT_TOKENS
+        sync: false
+
+      # --- Catalog / Addon Settings (survives redeploy) --------------------
+      # Paste the full JSON from your dashboard's #addon settings page here.
+      # The server merges this with any on-disk file; on-disk wins for in-
+      # session edits. On the free plan this is the only way to persist your
+      # catalog/upstream/stream config across redeploys.
+      #
+      # How to export your current settings:
+      #   1. Open your server dashboard → #addon tab
+      #   2. Open browser DevTools → Network → click "Save settings"
+      #   3. Copy the JSON request body — that is your PM_CATALOG_SETTINGS value
       - key: PM_CATALOG_SETTINGS
         sync: false
